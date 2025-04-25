@@ -1,0 +1,75 @@
+import os
+import numpy as np
+from osgeo import gdal
+
+gdal.UseExceptions()
+
+
+def readTif(fileName):
+    dataset = gdal.Open(fileName)
+    if dataset is None:
+        raise FileNotFoundError(f"无法打开文件: {fileName}")
+    return dataset
+
+
+def writeTiff(im_data, im_geotrans, im_proj, path):
+    if 'int8' in im_data.dtype.name:
+        datatype = gdal.GDT_Byte
+    elif 'int16' in im_data.dtype.name:
+        datatype = gdal.GDT_UInt16
+    else:
+        datatype = gdal.GDT_Float32
+
+    im_bands, im_height, im_width = im_data.shape if len(im_data.shape) == 3 else (1, *im_data.shape)
+    driver = gdal.GetDriverByName("GTiff")
+    dataset = driver.Create(path, im_width, im_height, im_bands, datatype)
+    if dataset:
+        dataset.SetGeoTransform(im_geotrans)
+        dataset.SetProjection(im_proj)
+        for i in range(im_bands):
+            dataset.GetRasterBand(i + 1).WriteArray(im_data[i] if im_bands > 1 else im_data)
+        del dataset
+
+
+def TifMerge(CropPath, SavePath, CropSize, RepetitionRate, ori_tif):
+    files = sorted([f for f in os.listdir(CropPath) if f.endswith('.tif')], key=lambda x: int(x.split('.')[0]))
+    if not files:
+        raise ValueError("未找到裁剪后的 TIFF 影像")
+
+    dataset_ori = readTif(ori_tif)
+    ori_width, ori_height = dataset_ori.RasterXSize, dataset_ori.RasterYSize
+    proj = dataset_ori.GetProjection()
+    geotrans = dataset_ori.GetGeoTransform()
+    step = int(CropSize * (1 - RepetitionRate))
+    rows = (ori_height - CropSize) // step + 1
+    cols = (ori_width - CropSize) // step + 1
+    first_crop = readTif(os.path.join(CropPath, files[0]))
+    img_band = first_crop.RasterCount
+    crop_array = first_crop.ReadAsArray()
+    full_image = np.zeros((img_band, ori_height, ori_width), dtype=crop_array.dtype) if len(
+        crop_array.shape) == 3 else np.zeros((ori_height, ori_width), dtype=crop_array.dtype)
+
+    index = 0
+    for i in range(rows):
+        for j in range(cols):
+            if index >= len(files):
+                continue
+            crop_data = readTif(os.path.join(CropPath, files[index])).ReadAsArray()
+            start_x, start_y = j * step, i * step
+            if len(crop_data.shape) == 2:
+                full_image[start_y:start_y + CropSize, start_x:start_x + CropSize] = crop_data
+            else:
+                full_image[:, start_y:start_y + CropSize, start_x:start_x + CropSize] = crop_data
+            index += 1
+
+    writeTiff(full_image, geotrans, proj, SavePath)
+    print(f"拼接完成，文件保存至: {SavePath}")
+
+
+TifMerge(
+    CropPath="C:/Users/Lenovo/Documents/桌面/大图/2020_tengger_滑窗",
+    SavePath="C:/Users/Lenovo/Documents/桌面/大图/2020_tengger_pinjie.tif",
+    CropSize=512,
+    RepetitionRate=0,
+    ori_tif="C:/Users/Lenovo/Documents/桌面/大图/2020_tengger.tif"
+)
