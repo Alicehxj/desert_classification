@@ -1,0 +1,91 @@
+import time
+import os
+from tqdm import tqdm
+from PIL import Image
+import cv2
+import numpy as np
+from PIL import Image
+
+from unet import Unet_ONNX, Unet
+
+unet = Unet()
+
+if __name__ == "__main__":
+    mode = "dir_predict"
+    count = False
+    name_classes = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"]
+    dir_origin_path = "C:/Users/Lenovo/Documents/桌面/大图/2020_tengger2048"
+    dir_save_path = ("C:/Users/Lenovo/Documents/桌面/大图/2020_tengger_滑窗2048")
+    simplify = True
+
+
+def sliding_window_prediction(image, unet, window_size=512, stride=256):
+    """
+    对输入图片进行滑窗预测，并拼接成完整图片
+    :param image: 输入的PIL.Image对象
+    :param unet: 预测模型（unet.detect_image）
+    :param window_size: 窗口大小（512×512）
+    :param stride: 滑动步长（256）
+    :return: 预测后的完整图片
+    """
+    image = image.convert("RGB")  # 确保是RGB模式
+    img_width, img_height = image.size
+
+    # 计算滑窗步数
+    step_x = (img_width - window_size) // stride + 1
+    step_y = (img_height - window_size) // stride + 1
+
+    # 创建空白图像存放结果
+    prediction_result = np.zeros((img_height, img_width, 3), dtype=np.uint8)
+
+    for y in range(step_y):
+        for x in range(step_x):
+            left = x * stride
+            upper = y * stride
+            right = left + window_size
+            lower = upper + window_size
+
+            # 防止超出边界（右下角可能有空余部分）
+            if right > img_width:
+                right = img_width
+                left = img_width - window_size
+            if lower > img_height:
+                lower = img_height
+                upper = img_height - window_size
+
+            # 裁剪窗口
+            crop_img = image.crop((left, upper, right, lower))
+
+            # 预测
+            pred_crop = unet.detect_image(crop_img)
+
+            # 转换为numpy
+            pred_crop_np = np.array(pred_crop)
+
+            # 填充到大图中
+            prediction_result[upper:lower, left:right] = pred_crop_np
+
+    # 转换回PIL.Image格式
+    return Image.fromarray(prediction_result)
+
+# ====================== 处理整个文件夹 ======================
+
+if mode == "dir_predict":
+    dir_origin_path = "C:/Users/Lenovo/Documents/桌面/大图/2020_tengger2048"
+    dir_save_path = "C:/Users/Lenovo/Documents/桌面/大图/2020_tengger_滑窗2048"
+
+    if not os.path.exists(dir_save_path):
+        os.makedirs(dir_save_path)
+
+    img_names = os.listdir(dir_origin_path)
+
+    for img_name in tqdm(img_names):
+        if img_name.lower().endswith(('.bmp', '.dib', '.png', '.jpg', '.jpeg', '.pbm', '.pgm', '.ppm', '.tif', '.tiff')):
+            image_path = os.path.join(dir_origin_path, img_name)
+            image = Image.open(image_path)
+
+            # 滑窗预测
+            r_image = sliding_window_prediction(image, unet)
+
+            # 保存
+            r_image.save(os.path.join(dir_save_path, img_name))
